@@ -8,7 +8,6 @@ import zipfile
 # ----------------- Streamlit Page Setup -----------------
 st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.title("📄 Invoice Splitter & Renamer")
-st.markdown("Upload a PDF to split and rename based on: **<InvoiceNo>_<ScheduleDate>_<ClientName>**")
 
 # ----------------- File Upload -----------------
 uploaded_file = st.file_uploader("Upload your PDF file", type="pdf")
@@ -31,36 +30,38 @@ if uploaded_file is not None:
                 invoice_no_match = re.search(r"INVOICE\s*NO\s*[:\s]*(\w+)", page_text, re.IGNORECASE)
                 invoice_no = invoice_no_match.group(1) if invoice_no_match else "UnknownInvoice"
 
-                # 2. Extract Schedule Date (Example: 02 FEBRUARY 2023 or 20/12/2023)
-                # This looks for "Schedule:" and captures the text until the end of that line
+                # 2. Extract Schedule Date & Format (Example: 02FEBRUARY2023)
                 schedule_match = re.search(r"Schedule[:\s]*([^\n]+)", page_text, re.IGNORECASE)
                 schedule_date = "NoDate"
                 if schedule_match:
                     raw_date = schedule_match.group(1).strip()
-                    # Sanitize date (remove slashes and extra spaces for filename safety)
-                    schedule_date = re.sub(r"[\s/]+", "_", raw_date)
+                    # Remove ALL spaces and slashes as requested
+                    schedule_date = re.sub(r"[\s/]+", "", raw_date)
 
-                # 3. Extract Client Name (Fixed for Quotation No)
-                # This Regex captures everything between ATIN/ATTN and the next major label (QUOTATION/TEL)
+                # 3. Extract Client Name (Line directly below "INVOICE")
                 client_name = "UnknownClient"
-                attn_pattern = re.search(r"(?:ATT?N)[:\s]*(.*?)(?=QUOTATION|TEL|PAYMENT|\n|$)", page_text, re.IGNORECASE | re.DOTALL)
+                for idx, line in enumerate(lines):
+                    if line.strip().upper() == "INVOICE":
+                        # Check if there is a line after "INVOICE"
+                        if idx + 1 < len(lines):
+                            potential_name = lines[idx+1].strip()
+                            # Ensure we don't accidentally grab a label like "ATTN" or "DATE"
+                            if not any(label in potential_name.upper() for label in ["ATTN", "DATE", "NO :", "TEL"]):
+                                client_name = potential_name
+                                break
                 
-                if attn_pattern:
-                    client_name = attn_pattern.group(1).strip()
-                    # Remove any leftover quotes or commas from PDF artifacts
-                    client_name = client_name.replace('"', '').replace(',', '').strip()
-
-                # Clean client name for safe filename
-                client_name = "".join(c for c in client_name if c.isalnum() or c in (' ', '_')).strip()
+                # Sanitize client name for filename (remove invalid chars, keep spaces as underscores)
+                client_name = "".join(c for c in client_name if c.isalnum() or c == ' ').strip()
                 client_name = client_name.replace(" ", "_")
 
-                # ----------------- Create individual PDF for this page -----------------
+                # ----------------- Create individual PDF -----------------
                 pdf_writer = PyPDF2.PdfWriter()
                 pdf_writer.add_page(pdf_reader.pages[i])
                 pdf_bytes = BytesIO()
                 pdf_writer.write(pdf_bytes)
 
                 # ----------------- Final Filename -----------------
+                # Format: <InvoiceNo>_<ScheduleDate>_<ClientName>.pdf
                 output_filename = f"{invoice_no}_{schedule_date}_{client_name}.pdf"
                 zip_file.writestr(output_filename, pdf_bytes.getvalue())
                 processed_count += 1
