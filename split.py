@@ -23,38 +23,30 @@ if uploaded_file is not None:
     with zipfile.ZipFile(zip_buffer, "w") as zip_file:
         with pdfplumber.open(uploaded_file) as pdf:
             for i in range(total_pages):
-                page = pdf.pages[i]
-                page_text = page.extract_text() or ""
+                page_text = pdf.pages[i].extract_text() or ""
                 
-                # 1. Extract Invoice Number (Example: IN3048)
+                # 1. Extract Invoice Number (e.g., IN3048)
                 invoice_no_match = re.search(r"INVOICE\s*NO\s*[:\s]*(\w+)", page_text, re.IGNORECASE)
                 invoice_no = invoice_no_match.group(1) if invoice_no_match else "UnknownInvoice"
 
-                # 2. Extract Schedule Date & Format (Requested: 02FEBRUARY2023)
+                # 2. Extract Schedule Date & Format (e.g., 02FEBRUARY2023)
                 schedule_match = re.search(r"Schedule[:\s]*([^\n]+)", page_text, re.IGNORECASE)
                 schedule_date = "NoDate"
                 if schedule_match:
                     raw_date = schedule_match.group(1).strip()
-                    # Remove ALL spaces, slashes, and underscores
-                    schedule_date = re.sub(r"[\s/_]+", "", raw_date)
+                    # Remove spaces and slashes within the date
+                    schedule_date = re.sub(r"[\s/]+", "", raw_date)
 
-                # 3. Extract Client Name (Text between 'INVOICE' and 'INVOICE NO')
+                # 3. Extract Client Name (The text right below "INVOICE")
                 client_name = "UnknownClient"
-                # Using a regex to find text located between the headers
+                # Look for text between 'INVOICE' and 'INVOICE NO'
                 name_pattern = re.search(r"INVOICE\s+(.*?)\s+INVOICE\s*NO", page_text, re.IGNORECASE | re.DOTALL)
                 
                 if name_pattern:
-                    # Clean the captured block: take first line and remove symbols
                     raw_name = name_pattern.group(1).split('\n')[0].strip()
-                    # Remove quotes, commas, and other PDF artifacts
-                    raw_name = raw_name.replace('"', '').replace(',', '')
-                    # Remove ALL non-alphanumeric characters (including spaces and underscores)
+                    # Remove all non-alphanumeric characters from the name (No spaces, no underscores)
                     client_name = re.sub(r"[^a-zA-Z0-9]+", "", raw_name)
                 
-                # Double check if name is still empty
-                if not client_name or client_name == "":
-                    client_name = "UnknownClient"
-
                 # ----------------- Create individual PDF -----------------
                 pdf_writer = PyPDF2.PdfWriter()
                 pdf_writer.add_page(pdf_reader.pages[i])
@@ -62,8 +54,8 @@ if uploaded_file is not None:
                 pdf_writer.write(pdf_bytes)
 
                 # ----------------- Final Filename -----------------
-                # Result format: IN304802FEBRUARY2023DinhVanAnh.pdf
-                output_filename = f"{invoice_no}{schedule_date}{client_name}.pdf"
+                # Format: <InvoiceNo>_<ScheduleDate>_<ClientNameWithoutSpaces>.pdf
+                output_filename = f"{invoice_no}_{schedule_date}_{client_name}.pdf"
                 
                 zip_file.writestr(output_filename, pdf_bytes.getvalue())
                 processed_count += 1
@@ -71,10 +63,10 @@ if uploaded_file is not None:
 
     # ----------------- Download Button -----------------
     if processed_count > 0:
-        st.success(f"Processing complete! {processed_count} invoices renamed with no spaces/underscores.")
+        st.success(f"Processing complete! {processed_count} invoices renamed.")
         st.download_button(
             label="📥 Download All Invoices as ZIP",
             data=zip_buffer.getvalue(),
-            file_name="renamed_invoices.zip",
+            file_name="split_invoices.zip",
             mime="application/zip"
         )
