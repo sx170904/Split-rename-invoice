@@ -25,8 +25,7 @@ if uploaded_file is not None:
             for i in range(total_pages):
                 page = pdf.pages[i]
                 page_text = page.extract_text() or ""
-                lines = [line.strip() for line in page_text.split('\n')]
-
+                
                 # 1. Extract Invoice Number (Example: IN3048)
                 invoice_no_match = re.search(r"INVOICE\s*NO\s*[:\s]*(\w+)", page_text, re.IGNORECASE)
                 invoice_no = invoice_no_match.group(1) if invoice_no_match else "UnknownInvoice"
@@ -36,33 +35,25 @@ if uploaded_file is not None:
                 schedule_date = "NoDate"
                 if schedule_match:
                     raw_date = schedule_match.group(1).strip()
-                    # Remove ALL spaces and slashes as requested
-                    schedule_date = re.sub(r"[\s/]+", "", raw_date)
+                    # Remove ALL spaces, slashes, and underscores
+                    schedule_date = re.sub(r"[\s/_]+", "", raw_date)
 
-                # 3. Extract Client Name (Flexible logic for text near 'INVOICE' header)
+                # 3. Extract Client Name (Text between 'INVOICE' and 'INVOICE NO')
                 client_name = "UnknownClient"
-                # Locate 'INVOICE' and 'INVOICE NO' to find the text between them
-                try:
-                    # Capture everything between 'INVOICE' and 'INVOICE NO'
-                    # Your PDF often has: INVOICE \n Client Name \n INVOICE NO
-                    name_pattern = re.search(r"INVOICE\s+(.*?)\s+INVOICE\s*NO", page_text, re.IGNORECASE | re.DOTALL)
-                    if name_pattern:
-                        # Take the first line of the captured group
-                        client_name = name_pattern.group(1).split('\n')[0].strip()
-                    
-                    # Fallback: if client_name is empty or too short, look for the line after 'INVOICE'
-                    if client_name == "UnknownClient" or len(client_name) < 2:
-                        for idx, line in enumerate(lines):
-                            if "INVOICE" == line.upper():
-                                if idx + 1 < len(lines):
-                                    client_name = lines[idx+1].strip()
-                                    break
-                except Exception:
-                    pass
+                # Using a regex to find text located between the headers
+                name_pattern = re.search(r"INVOICE\s+(.*?)\s+INVOICE\s*NO", page_text, re.IGNORECASE | re.DOTALL)
                 
-                # Sanitize client name for filename
-                client_name = "".join(c for c in client_name if c.isalnum() or c == ' ').strip()
-                client_name = client_name.replace(" ", "_")
+                if name_pattern:
+                    # Clean the captured block: take first line and remove symbols
+                    raw_name = name_pattern.group(1).split('\n')[0].strip()
+                    # Remove quotes, commas, and other PDF artifacts
+                    raw_name = raw_name.replace('"', '').replace(',', '')
+                    # Remove ALL non-alphanumeric characters (including spaces and underscores)
+                    client_name = re.sub(r"[^a-zA-Z0-9]+", "", raw_name)
+                
+                # Double check if name is still empty
+                if not client_name or client_name == "":
+                    client_name = "UnknownClient"
 
                 # ----------------- Create individual PDF -----------------
                 pdf_writer = PyPDF2.PdfWriter()
@@ -71,17 +62,19 @@ if uploaded_file is not None:
                 pdf_writer.write(pdf_bytes)
 
                 # ----------------- Final Filename -----------------
-                output_filename = f"{invoice_no}_{schedule_date}_{client_name}.pdf"
+                # Result format: IN304802FEBRUARY2023DinhVanAnh.pdf
+                output_filename = f"{invoice_no}{schedule_date}{client_name}.pdf"
+                
                 zip_file.writestr(output_filename, pdf_bytes.getvalue())
                 processed_count += 1
                 st.write(f"✅ Processed page {i+1}: {output_filename}")
 
     # ----------------- Download Button -----------------
     if processed_count > 0:
-        st.success(f"Processing complete! {processed_count} invoices renamed.")
+        st.success(f"Processing complete! {processed_count} invoices renamed with no spaces/underscores.")
         st.download_button(
             label="📥 Download All Invoices as ZIP",
             data=zip_buffer.getvalue(),
-            file_name="split_invoices.zip",
+            file_name="renamed_invoices.zip",
             mime="application/zip"
         )
