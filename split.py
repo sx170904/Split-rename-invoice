@@ -23,14 +23,15 @@ if uploaded_file is not None:
     with zipfile.ZipFile(zip_buffer, "w") as zip_file:
         with pdfplumber.open(uploaded_file) as pdf:
             for i in range(total_pages):
-                page_text = pdf.pages[i].extract_text() or ""
+                page = pdf.pages[i]
+                page_text = page.extract_text() or ""
                 lines = [line.strip() for line in page_text.split('\n')]
 
                 # 1. Extract Invoice Number (Example: IN3048)
                 invoice_no_match = re.search(r"INVOICE\s*NO\s*[:\s]*(\w+)", page_text, re.IGNORECASE)
                 invoice_no = invoice_no_match.group(1) if invoice_no_match else "UnknownInvoice"
 
-                # 2. Extract Schedule Date & Format (Example: 02FEBRUARY2023)
+                # 2. Extract Schedule Date & Format (Requested: 02FEBRUARY2023)
                 schedule_match = re.search(r"Schedule[:\s]*([^\n]+)", page_text, re.IGNORECASE)
                 schedule_date = "NoDate"
                 if schedule_match:
@@ -38,19 +39,28 @@ if uploaded_file is not None:
                     # Remove ALL spaces and slashes as requested
                     schedule_date = re.sub(r"[\s/]+", "", raw_date)
 
-                # 3. Extract Client Name (Line directly below "INVOICE")
+                # 3. Extract Client Name (Flexible logic for text near 'INVOICE' header)
                 client_name = "UnknownClient"
-                for idx, line in enumerate(lines):
-                    if line.strip().upper() == "INVOICE":
-                        # Check if there is a line after "INVOICE"
-                        if idx + 1 < len(lines):
-                            potential_name = lines[idx+1].strip()
-                            # Ensure we don't accidentally grab a label like "ATTN" or "DATE"
-                            if not any(label in potential_name.upper() for label in ["ATTN", "DATE", "NO :", "TEL"]):
-                                client_name = potential_name
-                                break
+                # Locate 'INVOICE' and 'INVOICE NO' to find the text between them
+                try:
+                    # Capture everything between 'INVOICE' and 'INVOICE NO'
+                    # Your PDF often has: INVOICE \n Client Name \n INVOICE NO
+                    name_pattern = re.search(r"INVOICE\s+(.*?)\s+INVOICE\s*NO", page_text, re.IGNORECASE | re.DOTALL)
+                    if name_pattern:
+                        # Take the first line of the captured group
+                        client_name = name_pattern.group(1).split('\n')[0].strip()
+                    
+                    # Fallback: if client_name is empty or too short, look for the line after 'INVOICE'
+                    if client_name == "UnknownClient" or len(client_name) < 2:
+                        for idx, line in enumerate(lines):
+                            if "INVOICE" == line.upper():
+                                if idx + 1 < len(lines):
+                                    client_name = lines[idx+1].strip()
+                                    break
+                except Exception:
+                    pass
                 
-                # Sanitize client name for filename (remove invalid chars, keep spaces as underscores)
+                # Sanitize client name for filename
                 client_name = "".join(c for c in client_name if c.isalnum() or c == ' ').strip()
                 client_name = client_name.replace(" ", "_")
 
@@ -61,7 +71,6 @@ if uploaded_file is not None:
                 pdf_writer.write(pdf_bytes)
 
                 # ----------------- Final Filename -----------------
-                # Format: <InvoiceNo>_<ScheduleDate>_<ClientName>.pdf
                 output_filename = f"{invoice_no}_{schedule_date}_{client_name}.pdf"
                 zip_file.writestr(output_filename, pdf_bytes.getvalue())
                 processed_count += 1
